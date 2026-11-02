@@ -5,14 +5,20 @@ set -e
 cargo build
 
 MINISH="./target/debug/minish"
+# On Windows cargo builds minish.exe
+[ -x "$MINISH.exe" ] && MINISH="$MINISH.exe"
+
+# Scratch folder inside the project: native Windows binaries cannot resolve /tmp
+TMPD=".test_tmp"
+rm -rf "$TMPD" && mkdir -p "$TMPD"
 
 echo "=== Running Output Verification Tests (diffed against bash) ==="
 
 # Test 1: Whitespace collapsing
 echo -n "Test 1 (whitespace collapsing): "
-$MINISH -c "echo one two   three" > /tmp/out_minish.txt
-bash -c "echo one two   three" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "echo one two   three" > $TMPD/out_minish.txt
+bash -c "echo one two   three" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -21,9 +27,9 @@ fi
 
 # Test 2: Quoting
 echo -n "Test 2 (quoting): "
-$MINISH -c "echo \"a  b\" 'c  d'" > /tmp/out_minish.txt
-bash -c "echo \"a  b\" 'c  d'" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "echo \"a  b\" 'c  d'" > $TMPD/out_minish.txt
+bash -c "echo \"a  b\" 'c  d'" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -32,9 +38,9 @@ fi
 
 # Test 3: 3-stage pipeline
 echo -n "Test 3 (3-stage pipeline): "
-$MINISH -c "printf 'b\na\nc\n' | sort | head -2" > /tmp/out_minish.txt
-bash -c "printf 'b\na\nc\n' | sort | head -2" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "printf 'b\na\nc\n' | sort | head -2" > $TMPD/out_minish.txt
+bash -c "printf 'b\na\nc\n' | sort | head -2" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -43,10 +49,10 @@ fi
 
 # Test 4: Redirection
 echo -n "Test 4 (redirection): "
-$MINISH -c "echo data > /tmp/mt.txt"
-$MINISH -c "cat < /tmp/mt.txt" > /tmp/out_minish.txt
-bash -c "cat < /tmp/mt.txt" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "echo data > $TMPD/mt.txt"
+$MINISH -c "cat < $TMPD/mt.txt" > $TMPD/out_minish.txt
+bash -c "cat < $TMPD/mt.txt" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -55,8 +61,9 @@ fi
 
 # Test 5: cd state mutation
 echo -n "Test 5 (cd state mutation): "
-res=$(printf "cd /tmp\npwd\n" | $MINISH | sed 's/minish>//g' | xargs)
-if [ "$res" = "/tmp" ]; then
+res=$(printf "cd $TMPD\npwd\n" | $MINISH | sed 's/minish>//g' | xargs)
+case "$res" in *"$TMPD") ok=1 ;; *) ok=0 ;; esac
+if [ "$ok" = 1 ]; then
     echo "OK"
 else
     echo "FAIL (got $res)"
@@ -88,9 +95,9 @@ fi
 
 # Test 8: Chaining (&& / ||)
 echo -n "Test 8 (chaining && and ||): "
-$MINISH -c "true && echo success || echo fail" > /tmp/out_minish.txt
-bash -c "true && echo success || echo fail" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "true && echo success || echo fail" > $TMPD/out_minish.txt
+bash -c "true && echo success || echo fail" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -100,9 +107,9 @@ fi
 # Test 9: $VAR and $? expansion
 echo -n "Test 9 (\$VAR and \$? expansion): "
 export TEST_VAR="hello_env"
-$MINISH -c "echo \$TEST_VAR \$? \"\$TEST_VAR\" '\$TEST_VAR'" > /tmp/out_minish.txt
-bash -c "echo \$TEST_VAR \$? \"\$TEST_VAR\" '\$TEST_VAR'" > /tmp/out_bash.txt
-if diff /tmp/out_minish.txt /tmp/out_bash.txt; then
+$MINISH -c "echo \$TEST_VAR \$? \"\$TEST_VAR\" '\$TEST_VAR'" > $TMPD/out_minish.txt
+bash -c "echo \$TEST_VAR \$? \"\$TEST_VAR\" '\$TEST_VAR'" > $TMPD/out_bash.txt
+if diff $TMPD/out_minish.txt $TMPD/out_bash.txt; then
     echo "OK"
 else
     echo "FAIL"
@@ -113,7 +120,7 @@ fi
 echo -n "Test 10 (zombie process check): "
 # Let's run a pipeline and check if there are any defunct processes of ours
 $MINISH -c "sleep 0.1 | sleep 0.1 | sleep 0.1"
-zombies=$(ps -ef | grep defunct | grep -v grep || true)
+zombies=$( (ps -ef 2>/dev/null | grep defunct | grep -v grep) || true)
 if [ -z "$zombies" ]; then
     echo "OK (no zombies found)"
 else
@@ -122,7 +129,7 @@ else
 fi
 
 # Clean up
-rm -f /tmp/out_minish.txt /tmp/out_bash.txt /tmp/mt.txt
+rm -rf "$TMPD"
 
 echo ""
 echo "=== All Acceptance Tests Passed Successfully ==="

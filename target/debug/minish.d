@@ -1,1 +1,0 @@
-/home/rxj/Desktop/rust_internship/practice/minish/target/debug/minish: /home/rxj/Desktop/rust_internship/practice/minish/src/exec.rs /home/rxj/Desktop/rust_internship/practice/minish/src/main.rs /home/rxj/Desktop/rust_internship/practice/minish/src/parser.rs

@@ -1,7 +1,48 @@
 use std::fs::{File, OpenOptions};
-use std::io;
+use std::io::{self, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::process::{Command, Stdio, Child};
 use crate::parser::{Cmd, Pipeline, ChainOp, ChainedPipeline};
+
+/// Opens a file for `>>`. Windows programs (and msys tools such as `echo`) fail with
+/// "Bad file descriptor" on a handle opened append-only, so there we open for writing
+/// and seek to the end instead.
+fn open_append(path: &str) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        let mut file = OpenOptions::new().write(true).create(true).open(path)?;
+        file.seek(SeekFrom::End(0))?;
+        Ok(file)
+    }
+    #[cfg(not(windows))]
+    {
+        OpenOptions::new().create(true).append(true).open(path)
+    }
+}
+
+/// Finds a command the way a shell does: by walking `$PATH` in order. On Windows, Rust's
+/// `Command` would otherwise pick a program from the system directory first, so `sort`
+/// would run `sort.exe` from System32 even when a Unix `sort` comes earlier in `$PATH`.
+fn resolve_command(name: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if !name.contains('/') && !name.contains('\\') {
+            let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+            let exts: Vec<String> = pathext.split(';').filter(|e| !e.is_empty()).map(|e| e.to_lowercase()).collect();
+            if let Some(paths) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&paths) {
+                    for ext in &exts {
+                        let candidate = dir.join(format!("{}{}", name, ext));
+                        if candidate.is_file() {
+                            return candidate;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    PathBuf::from(name)
+}
 
 pub fn run_builtin_in_process(name: &str, args: &[String]) -> i32 {
     match name {
@@ -11,7 +52,7 @@ pub fn run_builtin_in_process(name: &str, args: &[String]) -> i32 {
                 return 1;
             }
             let target = if args.is_empty() {
-                match std::env::var("HOME") {
+                match std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
                     Ok(home) => home,
                     Err(_) => {
                         eprintln!("minish: cd: HOME not set");
@@ -90,11 +131,7 @@ pub fn execute_standalone_builtin(cmd: &Cmd) -> i32 {
             }
         }
     } else if let Some(ref append_file) = cmd.stdout_append {
-        match OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(append_file)
+        match open_append(append_file)
         {
             Ok(file) => {
                 redirect_file = Some(file);
@@ -187,11 +224,7 @@ pub fn execute_pipeline(pipeline: Pipeline) -> i32 {
                 }
             }
         } else if let Some(ref append_file) = cmd.stdout_append {
-            match OpenOptions::new()
-                .write(true)
-                .create(true)
-                .append(true)
-                .open(append_file)
+            match open_append(append_file)
             {
                 Ok(file) => Stdio::from(file),
                 Err(e) => {
@@ -215,7 +248,7 @@ pub fn execute_pipeline(pipeline: Pipeline) -> i32 {
             c.args(&cmd.argv[1..]);
             c
         } else {
-            let mut c = Command::new(name);
+            let mut c = Command::new(resolve_command(name));
             c.args(&cmd.argv[1..]);
             c
         };
